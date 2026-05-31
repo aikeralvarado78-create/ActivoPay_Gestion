@@ -343,10 +343,10 @@ if st.session_state["perfil"] == "NEGOCIOS":
                     bitacora_concatenada = f"{caso['observaciones']} | [Subsanado Comercial: {nota_ejecutivo}]"
                     
                     client_db.table("afiliaciones").update({
-                        "numero_cta": cta_final_sub,
-                        "estatus": "1. Pendiente",
-                        "fecha_recibido": datetime.now(timezone.utc).isoformat(), -- Resetea Semáforo a Cero
-                        "observaciones": bitacora_concatenada
+                    "numero_cta": cta_final_sub,
+                    "estatus": "1. Pendiente",
+                    "fecha_recibido": datetime.now(timezone.utc).isoformat(), -- Resetea Semáforo a Cero
+                    "observaciones": bitacora_concatenada
                     }).eq("id", id_sub).execute()
                     
                     st.success("🔄 Registro re-inyectado exitosamente en la bandeja técnica bajo regla FIFO. Semáforo en Verde.")

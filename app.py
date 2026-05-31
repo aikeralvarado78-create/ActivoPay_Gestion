@@ -129,7 +129,7 @@ def evaluar_archivo_staging_masivo(df_excel) -> pd.DataFrame:
         elif "credenciales" in estatus_original.lower() or "afiliado" in estatus_original.lower():
             estatus_mapeado = "4. Afiliado (Espera de Acompañamiento)"
         elif "produccion" in estatus_original.lower():
-            estatus_mapeado = "5. En Production"
+            estatus_mapeado = "5. En Producción"
         elif "otro" in estatus_original.lower():
             estatus_mapeado = "7. Por Clasificar (Histórico)"
 
@@ -168,14 +168,14 @@ def renderizar_bloque_chat_estructurado(afiliacion_id, nombre_cliente):
     if client_db:
         # Inyección de macros de respuestas rápidas (Paso 5 - Módulo III)
         macros = ["Seleccione una respuesta rápida...", "SLA Técnico extendido por caída de plataforma externa", "Ruta de cuenta errónea, favor revisar ficha comercial", "Falta firma digital en el contrato máster"]
-        macro_sel = st.selectbox("⚡ Macros Técnicas (Respuestas Rápidas)", macros)
+        macro_sel = st.selectbox("⚡ Macros Técnicas (Respuestas Rápidas)", macros, key=f"macro_{afiliacion_id}")
         
         motivos_chat = ["Error en Número de Cuenta", "Falla de Acceso/Credenciales", "Retraso en Asignación WH", "Soporte de Campo (Acompañamiento)"]
-        motivo_obligatorio = st.selectbox("⚠️ Selector Obligatorio de Motivo", motivos_chat)
+        motivo_obligatorio = st.selectbox("⚠️ Selector Obligatorio de Motivo", motivos_chat, key=f"motivo_ch_{afiliacion_id}")
         
-        msg_input = st.text_input("Escriba su mensaje aquí...", value="" if macro_sel == macros[0] else macro_sel)
+        msg_input = st.text_input("Escriba su mensaje aquí...", value="" if macro_sel == macros[0] else macro_sel, key=f"msg_in_{afiliacion_id}")
         
-        if st.button("Enviar Mensaje al Canal"):
+        if st.button("Enviar Mensaje al Canal", key=f"btn_send_{afiliacion_id}"):
             if msg_input.strip() != "":
                 client_db.table("chats_estructurados").insert({
                     "afiliacion_id": afiliacion_id,
@@ -214,7 +214,8 @@ if st.session_state["perfil"] == "NEGOCIOS":
                 df_staging,
                 disabled=["Alertas de Sistema"],
                 hide_index=True,
-                use_container_width=True
+                use_container_width=True,
+                key="editor_staging"
             )
             
             errores_bloqueantes = df_editado[df_editado["Aprobado"] == False]
@@ -250,7 +251,7 @@ if st.session_state["perfil"] == "NEGOCIOS":
             
             tel_emp = c1.text_input("Teléfono Principal Empresa")
             rub_emp = c2.text_input("Rubro Comercial")
-            n_usr = c3.number_input("Número de Personas que utilizarán la Aplicación ($N$)", min_value=1, value=1)
+            n_usr = c3.number_input("Número de Personas que utilizarán la Aplicación (N)", min_value=1, value=1)
             
             st.markdown("#### 👤 Datos de Estructura de Usuarios")
             st.subheader("Bloque Fijo: Usuario Master (Principal)")
@@ -269,7 +270,6 @@ if st.session_state["perfil"] == "NEGOCIOS":
             if st.form_submit_button("Inyectar Solicitud Manual"):
                 if client_db:
                     cta_final = ejecutar_algoritmo_normalizacion_cuenta(cta_emp)
-                    # Validación en Caliente previa a inserción (Paso 9)
                     check_m = client_db.table("afiliaciones").select("id").or_(f"rif.eq.{rif_emp},numero_cta.eq.{cta_final}").execute()
                     if check_m.data:
                         st.error("🚨 Error de Duplicidad Directo: El RIF o Cuenta ya existen en el Repositorio Global.")
@@ -297,7 +297,7 @@ if st.session_state["perfil"] == "NEGOCIOS":
                     st.dataframe(df_activo[["id", "nombre_empresa", "rif", "numero_cta", "estatus", "fecha_recibido"]], use_container_width=True)
                     
                     st.markdown("#### ⚙️ Acciones Autónomas de Comercial")
-                    id_accion = st.text_input("Ingrese el ID de la solicitud para interactuar")
+                    id_accion = st.text_input("Ingrese el ID de la solicitud para interactuar", key="id_act_com")
                     if id_accion:
                         fila_sel = df_activo[df_activo["id"] == id_accion]
                         if not fila_sel.empty:
@@ -321,7 +321,7 @@ if st.session_state["perfil"] == "NEGOCIOS":
     # MÓDULO III: PANTALLA Y LÓGICA DE SUBSANACIÓN
     with t_comercial[2]:
         st.header("Bandeja Guiada de Corrección Inteligente")
-        id_sub = st.text_input("Digite el ID de la fila resaltada en Naranja en su Tablero")
+        id_sub = st.text_input("Digite el ID de la fila resaltada en Naranja en su Tablero", key="id_sub_com")
         
         if id_sub and client_db:
             check_sub = client_db.table("afiliaciones").select("*").eq("id", id_sub).eq("estatus", "3. Rechazado (Por Subsanar)").execute()
@@ -331,25 +331,26 @@ if st.session_state["perfil"] == "NEGOCIOS":
                 st.warning(f"📝 Observaciones Fijas del Técnico Integrador: {caso['observaciones']}")
                 st.markdown("---")
                 
-                st.text_input("Empresa (Campo Correcto - Bloqueado)", value=caso["nombre_empresa"], disabled=True)
-                st.text_input("RIF (Campo Correcto - Bloqueado)", value=caso["rif"], disabled=True)
+                st.text_input("Empresa (Campo Correcto - Bloqueado)", value=caso["nombre_empresa"], disabled=True, key="sub_emp_dis")
+                st.text_input("RIF (Campo Correcto - Bloqueado)", value=caso["rif"], disabled=True, key="sub_rif_dis")
                 
                 st.error("⚠️ Campo Errado Detectado — Requiere Modificación:")
-                cta_corregida = st.text_input("Modificar Número de Cuenta (Borde Rojo / Alerta)", value=caso["numero_cta"])
-                nota_ejecutivo = st.text_area("Notas aclaratorias de la subsanación")
+                cta_corregida = st.text_input("Modificar Número de Cuenta (Borde Rojo / Alerta)", value=caso["numero_cta"], key="sub_cta_input")
+                nota_ejecutivo = st.text_area("Notas aclaratorias de la subsanación", key="sub_nota_input")
                 
                 if st.button("Procesar Re-envío Técnico"):
                     cta_final_sub = ejecutar_algoritmo_normalizacion_cuenta(cta_corregida)
                     bitacora_concatenada = f"{caso['observaciones']} | [Subsanado Comercial: {nota_ejecutivo}]"
                     
                     client_db.table("afiliaciones").update({
-                    "numero_cta": cta_final_sub,
-                    "estatus": "1. Pendiente",
-                    "fecha_recibido": datetime.now(timezone.utc).isoformat(),  # Resetea Semáforo a Cero
-                    "observaciones": bitacora_concatenada
+                        "numero_cta": cta_final_sub,
+                        "estatus": "1. Pendiente",
+                        "fecha_recibido": datetime.now(timezone.utc).isoformat(),  # Resetea Semáforo a Cero
+                        "observaciones": bitacora_concatenada
                     }).eq("id", id_sub).execute()
                     
                     st.success("🔄 Registro re-inyectado exitosamente en la bandeja técnica bajo regla FIFO. Semáforo en Verde.")
+                    st.rerun()
             else:
                 st.info("El ID indicado no requiere subsanación o no está en estado '3. Rechazado'.")
 
@@ -413,7 +414,7 @@ else:
                                             "fecha_afiliado": datetime.now(timezone.utc).isoformat(),
                                             "afiliador": "Ing. de Integración ActivoPay"
                                         }).eq("id", p["id"]).execute()
-                                        st.success("Caso cerrado de forma limpia en el Core.")
+                                        st.success("Caso cerrado de forma limpia in el Core.")
                                         st.rerun()
                             with col_b:
                                 st.markdown("##### Salida 2: Devolución por Alerta de Consistencia")
@@ -435,16 +436,14 @@ else:
             list_c = client_db.table("chats_estructurados").select("afiliacion_id").execute()
             if list_c.data:
                 unique_ids = list(set([x["afiliacion_id"] for x in list_c.data]))
-                id_chat_sel = st.selectbox("Seleccione el canal activo de la cola de atención", unique_ids)
+                id_chat_sel = st.selectbox("Seleccione el canal activo de la cola de atención", unique_ids, key="tec_chat_select")
                 
                 if id_chat_sel:
                     sc1, sc2 = st.columns(2)
                     with sc1:
-                        # Mitad 1: Ficha del cliente en paralelo
                         f_cli = client_db.table("afiliaciones").select("*").eq("id", id_chat_sel).execute().data[0]
                         st.json(f_cli)
                     with sc2:
-                        # Mitad 2: Chat e inyección de macros
                         renderizar_bloque_chat_estructurado(id_chat_sel, f_cli["nombre_empresa"])
 
     # MÓDULO IV: MÓDULO DE CONSULTA CENTRAL (REPOSITORIO BASE DE DATOS - LISTA MUERTA)
@@ -455,12 +454,11 @@ else:
         if client_db:
             df_global = pd.DataFrame(client_db.table("afiliaciones").select("*").execute().data)
             
-            # Buscador Universal Avanzado e Inspección Cruzada
-            busqueda = st.text_input("🔍 Buscador Universal Avanzado (Predictivo sobre celdas)")
+            busqueda = st.text_input("🔍 Buscador Universal Avanzado (Predictivo sobre celdas)", key="global_search_input")
             
             sc_a, sc_b = st.columns(2)
-            f_reg = sc_a.multiselect("Filtrar por Región", df_global["region"].unique())
-            f_est = sc_b.multiselect("Filtrar por Estatus Nuevo", df_global["estatus"].unique())
+            f_reg = sc_a.multiselect("Filtrar por Región", df_global["region"].unique(), key="filt_reg_tec")
+            f_est = sc_b.multiselect("Filtrar por Estatus Nuevo", df_global["estatus"].unique(), key="filt_est_tec")
             
             df_m_filtrado = df_global.copy()
             if busqueda:
@@ -472,12 +470,12 @@ else:
                 
             st.dataframe(df_m_filtrado, use_container_width=True)
             
-            # Exportación Nativa a Excel
             st.download_button(
                 label="📥 Exportar Repositorio Completo a Excel (.xlsx)",
                 data=df_m_filtrado.to_csv(index=False).encode('utf-8'),
                 file_name="repositorio_central_activopay.csv",
-                mime="text/csv"
+                mime="text/csv",
+                key="btn_download_csv"
             )
 
     # MÓDULO V: RECLASIFICACIÓN DE CASOS HISTÓRICOS (7. POR CLASIFICAR)
@@ -487,13 +485,13 @@ else:
             df_por_c = pd.DataFrame(client_db.table("afiliaciones").select("*").eq("estatus", "7. Por Clasificar (Histórico)").execute().data)
             if not df_por_c.empty:
                 st.dataframe(df_por_c[["id", "nombre_empresa", "estatus_original_excel", "observaciones"]], use_container_width=True)
-                id_reclass = st.text_input("ID del caso histórico a forzar migración")
+                id_reclass = st.text_input("ID del caso histórico a forzar migración", key="id_reclass_tec")
                 
                 if id_reclass:
-                    nuevo_e_f = st.selectbox("Forzar Nuevo Estatus Operacional", ["5. En Producción", "6. Desafiliado"])
-                    wh_f = st.text_input("Código WH Obligatorio de Saneamiento")
+                    nuevo_e_f = st.selectbox("Forzar Nuevo Estatus Operacional", ["5. En Producción", "6. Desafiliado"], key=f"sel_rec_{id_reclass}")
+                    wh_f = st.text_input("Código WH Obligatorio de Saneamiento", key=f"wh_rec_{id_reclass}")
                     
-                    if st.button("Forzar Migración Manual"):
+                    if st.button("Forzar Migración Manual", key=f"btn_rec_{id_reclass}"):
                         if wh_f.strip() == "":
                             st.error("Restricción: Debe asociar un código WH histórico.")
                         else:
@@ -527,16 +525,16 @@ if st.sidebar.checkbox("📊 Ver Dashboard de Gestión (Alta Gerencia)"):
             # BLOQUE A: EFICIENCIA OPERATIVA (SLA)
             with b1:
                 st.markdown("### Bloque A: Eficiencia Operativa")
-                st.metric("Índice de Cumplimiento Técnico (SLA %)", "94.2%") # Simulación de KPI agregado
-                st.metric("Tiempo Promedio Respuesta ($T_{tec}$)", "14.5 Horas")
+                st.metric("Índice de Cumplimiento Técnico (SLA %)", "94.2%")
+                st.metric("Tiempo Promedio Respuesta (T_tec)", "14.5 Horas")
                 st.caption("Distribución de Motivos de Devolución")
-                st.bar_chart(df_g["region"].value_counts()) # Proxy visual de dispersión
+                st.bar_chart(df_g["region"].value_counts())
                 
             # BLOQUE B: EVOLUCIÓN COMERCIAL
             with b2:
                 st.markdown("### Bloque B: Evolución Comercial")
-                st.metric("Tiempo de Activación ($T_{com}$)", "3.2 Días")
-                st.metric("Time-to-Market Total ($T_{total}$)", "3.8 Días")
+                st.metric("Tiempo de Activación (T_com)", "3.2 Días")
+                st.metric("Time-to-Market Total (T_total)", "3.8 Días")
                 
                 en_p = len(df_g[df_g["estatus"] == "5. En Producción"])
                 t_conv = (en_p / len(df_g)) * 100
@@ -547,4 +545,8 @@ if st.sidebar.checkbox("📊 Ver Dashboard de Gestión (Alta Gerencia)"):
                 st.markdown("### Bloque C: Tendencias de Mercado")
                 st.metric("Cartera Empresas Acumuladas", len(df_g))
                 st.caption("Adopción por Sectores Económicos (Rubros)")
-                st.bar_chart(df_g["rubro"].value_counts())
+                
+                if "rubro" in df_g.columns:
+                    st.bar_chart(df_g["rubro"].value_counts())
+                else:
+                    st.info("Sin datos de rubros para graficar.")

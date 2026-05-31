@@ -5,19 +5,60 @@ from datetime import datetime, timezone, timedelta
 from supabase import create_client, Client
 
 # =========================================================================
-# BLUEPRINT PASO 2: PERFILES DE USUARIO Y RESTRICCIONES DE SEGURIDAD
+# CONFIGURACIÓN INICIAL Y CONTROL DE SESIÓN (AUTENTICACIÓN)
 # =========================================================================
 st.set_page_config(page_title="ActivoPay Core v7.0", layout="wide")
 
-if "perfil" not in st.session_state:
-    st.session_state["perfil"] = "NEGOCIOS"
+# Diccionario de credenciales seguras de acceso corporativo
+USUARIOS_CREDENCIALES = {
+    "admin_tecnico": {"clave": "TechActivo2026*", "perfil": "TECNICO", "nombre": "Administrador Técnico"},
+    "ejecutivo_negocios": {"clave": "NegociosActivo2026*", "perfil": "NEGOCIOS", "nombre": "Usuario Comercial (Negocios/Gerencia)"}
+}
 
-st.sidebar.title("🔐 Control de Acc Access Perimetral")
-st.session_state["perfil"] = st.sidebar.selectbox(
-    "Seleccione Rol de Usuario Operativo",
-    ["NEGOCIOS", "TECNICO"],
-    format_func=lambda x: "💼 Banca de Negocios (Comercial)" if x == "NEGOCIOS" else "🛠️ Integración de Aplicaciones (Técnico)"
-)
+# Inicialización de variables de control en session_state
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"] = False
+if "perfil" not in st.session_state:
+    st.session_state["perfil"] = None
+if "usuario_nombre" not in st.session_state:
+    st.session_state["usuario_nombre"] = None
+
+# -------------------------------------------------------------------------
+# INTERFAZ DE LOGIN (Se muestra si el usuario no está autenticado)
+# -------------------------------------------------------------------------
+if not st.session_state["autenticado"]:
+    st.title("🔐 Sistema de Control de Acceso — ActivoPay Core")
+    st.markdown("---")
+    
+    col_login, _ = st.columns([1, 2])
+    with col_login:
+        st.subheader("Iniciar Sesión")
+        usuario_input = st.text_input("Usuario Corporativo", key="login_usuario")
+        clave_input = st.text_input("Contraseña", type="password", key="login_clave")
+        
+        if st.button("Ingresar al Sistema", use_container_width=True):
+            if usuario_input in USUARIOS_CREDENCIALES and USUARIOS_CREDENCIALES[usuario_input]["clave"] == clave_input:
+                st.session_state["autenticado"] = True
+                st.session_state["perfil"] = USUARIOS_CREDENCIALES[usuario_input]["perfil"]
+                st.session_state["usuario_nombre"] = USUARIOS_CREDENCIALES[usuario_input]["nombre"]
+                st.success(f"🔓 Acceso concedido como {st.session_state['usuario_nombre']}")
+                st.rerun()
+            else:
+                st.error("❌ Credenciales inválidas. Por favor, verifique el usuario o la contraseña.")
+    st.stop() # Detiene la ejecución del resto del script si no está logueado
+
+# -------------------------------------------------------------------------
+# BARRA LATERAL CONFIGURADA POR ROL (POST-LOGIN)
+# -------------------------------------------------------------------------
+st.sidebar.title("🛡️ Seguridad Perimetral")
+st.sidebar.write(f"**Usuario:** {st.session_state['usuario_nombre']}")
+st.sidebar.write(f"**Rol Asignado:** `{st.session_state['perfil']}`")
+
+if st.sidebar.button("🔒 Cerrar Sesión", use_container_width=True):
+    st.session_state["autenticado"] = False
+    st.session_state["perfil"] = None
+    st.session_state["usuario_nombre"] = None
+    st.rerun()
 
 # Conexión Segura al Backend Serverless (Supabase Free Tier)
 @st.cache_resource
@@ -31,7 +72,7 @@ def iniciar_conexion_supabase() -> Client:
 client_db = iniciar_conexion_supabase()
 
 # =========================================================================
-# BLUEPRINT PASO 7 & 9: ALGORITMO RÍGIDO DE CAPTURA DE CUENTAS (10 DÍGITOS)
+# ALGORITMOS DE NORMALIZACIÓN Y SEMÁFOROS (SLA)
 # =========================================================================
 def ejecutar_algoritmo_normalizacion_cuenta(cuenta_raw) -> str:
     """
@@ -43,9 +84,6 @@ def ejecutar_algoritmo_normalizacion_cuenta(cuenta_raw) -> str:
     cuenta_limpia = re.sub(r'\D', '', str(cuenta_raw))
     return cuenta_limpia[-10:] if len(cuenta_limpia) >= 10 else cuenta_limpia
 
-# =========================================================================
-# BLUEPRINT PASO 8: MOTOR DE CONTROL DE TIEMPOS Y SEMÁFORO DE SLA (24 HORAS)
-# =========================================================================
 def calcular_semaforo_sla_tecnico(fecha_recibido_iso) -> tuple:
     """
     Vigila el cumplimiento estricto del tiempo de respuesta técnico acordado de 24 horas.
@@ -73,7 +111,7 @@ def calcular_semaforo_sla_tecnico(fecha_recibido_iso) -> tuple:
         return "🔴", "Core Rojo (SLA Vencido)", f"+{str(timedelta(seconds=segundos_desfase))}"
 
 # =========================================================================
-# BLUEPRINT PASO 3 & 7: MOTOR DE PRE-PROCESAMIENTO EN CALIENTE (STAGING AREA)
+# MOTOR DE PRE-PROCESAMIENTO EN CALIENTE (STAGING AREA)
 # =========================================================================
 def evaluar_archivo_staging_masivo(df_excel) -> pd.DataFrame:
     data_staging = []
@@ -82,20 +120,17 @@ def evaluar_archivo_staging_masivo(df_excel) -> pd.DataFrame:
         alertas = []
         es_valido = True
         
-        # 1. Normalización estricta de cuenta a los 10 dígitos
         cta_original = row.iloc[5] if len(row) > 5 else ""
         cta_normalizada = ejecutar_algoritmo_normalizacion_cuenta(cta_original)
         if len(cta_normalizada) < 10:
             alertas.append("Estructura de Cuenta Inválida (Menor a 10 dígitos corporativos)")
             es_valido = False
             
-        # 2. Validación por Expresión Regular del RIF Corporativo
         rif = str(row.iloc[4]).strip().upper() if len(row) > 4 else ""
         if not re.match(r'^[JGEVVD]-[0-9]{8}-[0-9]$', rif):
             alertas.append("RIF no cumple con regex estandarizada ^[JGEVVD]-[0-9]{8}-[0-9]$")
             es_valido = False
             
-        # 3. Validación Condicional del Bloque Multiusuario (Paso 4 - Módulo I)
         try:
             n_personas = int(row.iloc[8]) if len(row) > 8 else 1
         except:
@@ -107,7 +142,6 @@ def evaluar_archivo_staging_masivo(df_excel) -> pd.DataFrame:
                 alertas.append(f"Inconsistencia: Se exigen {n_personas} usuarios pero falta C.I. de Usuario Secundario 1")
                 es_valido = False
 
-        # 4. Evaluación Síncrona de la Lista Muerta contra Duplicados (Paso 9)
         if client_db and es_valido:
             tel = str(row.iloc[6]).strip() if len(row) > 6 else ""
             ci_m = str(row.iloc[10]).strip() if len(row) > 10 else ""
@@ -125,7 +159,6 @@ def evaluar_archivo_staging_masivo(df_excel) -> pd.DataFrame:
                 alertas.append(f"⚠️ Error de validación en Supabase (Verificar RLS/Columnas): {str(e)}")
                 es_valido = False
 
-        # 5. Mapeo Automático de Estatus Tradicionales (Paso 3)
         estatus_original = str(row.iloc[21]).strip() if len(row) > 21 else "Recibido"
         estatus_mapeado = "1. Pendiente"
         if "falta" in estatus_original.lower() or "subsanar" in estatus_original.lower():
@@ -138,39 +171,27 @@ def evaluar_archivo_staging_masivo(df_excel) -> pd.DataFrame:
             estatus_mapeado = "7. Por Clasificar (Histórico)"
 
         data_staging.append({
-            "Región": str(row.iloc[0]) if len(row) > 0 else "",
-            "Ejecutivo": str(row.iloc[1]) if len(row) > 1 else "",
-            "Correo del Ejecutivo": str(row.iloc[2]) if len(row) > 2 else "",
-            "Nombre de la Empresa": str(row.iloc[3]) if len(row) > 3 else "",
-            "RIF": rif,
-            "Cuenta Normalizada": cta_normalizada,
-            "Teléfono": str(row.iloc[6]) if len(row) > 6 else "",
-            "Rubro": str(row.iloc[7]) if len(row) > 7 else "",
-            "Nro Usuarios": n_personas,
-            "Nombre Master": str(row.iloc[9]) if len(row) > 9 else "",
-            "C.I. Master": str(row.iloc[10]) if len(row) > 10 else "",
-            "Correo Master": str(row.iloc[11]) if len(row) > 11 else "",
-            "Nombre Secundario": str(row.iloc[12]) if len(row) > 12 else "",
-            "C.I. Secundario": str(row.iloc[13]) if len(row) > 13 else "",
-            "Correo Secundario": str(row.iloc[14]) if len(row) > 14 else "",
-            "Estatus Mapeado": estatus_mapeado,
-            "Estatus Original Excel": estatus_original,
-            "Observaciones Iniciales": str(row.iloc[22]) if len(row) > 22 else "",
-            "Alertas de Sistema": ", ".join(alertas) if alertas else "Validación Exitosa 🟢",
-            "Aprobado": es_valido
+            "Región": str(row.iloc[0]) if len(row) > 0 else "", "Ejecutivo": str(row.iloc[1]) if len(row) > 1 else "",
+            "Correo del Ejecutivo": str(row.iloc[2]) if len(row) > 2 else "", "Nombre de la Empresa": str(row.iloc[3]) if len(row) > 3 else "",
+            "RIF": rif, "Cuenta Normalizada": cta_normalizada, "Teléfono": str(row.iloc[6]) if len(row) > 6 else "",
+            "Rubro": str(row.iloc[7]) if len(row) > 7 else "", "Nro Usuarios": n_personas, "Nombre Master": str(row.iloc[9]) if len(row) > 9 else "",
+            "C.I. Master": str(row.iloc[10]) if len(row) > 10 else "", "Correo Master": str(row.iloc[11]) if len(row) > 11 else "",
+            "Nombre Secundario": str(row.iloc[12]) if len(row) > 12 else "", "C.I. Secundario": str(row.iloc[13]) if len(row) > 13 else "",
+            "Correo Secundario": str(row.iloc[14]) if len(row) > 14 else "", "Estatus Mapeado": estatus_mapeado,
+            "Estatus Original Excel": estatus_original, "Observaciones Iniciales": str(row.iloc[22]) if len(row) > 22 else "",
+            "Alertas de Sistema": ", ".join(alertas) if alertas else "Validación Exitosa 🟢", "Aprobado": es_valido
         })
         
     return pd.DataFrame(data_staging)
 
 # =========================================================================
-# LÓGICA DE EJECUCIÓN SÍNCRONA DE CHATS (PASO 4 - MÓDULO IV)
+# CHATS ESTRUCTURADOS SÍNCRONOS
 # =========================================================================
 def renderizar_bloque_chat_estructurado(afiliacion_id, nombre_cliente):
     st.markdown(f"### 💬 Chat de Consulta Rápida: {nombre_cliente}")
     st.caption("🔒 Canal vinculado con vencimiento forzado automático a las 24 horas.")
     
     if client_db:
-        # Inyección de macros de respuestas rápidas (Paso 5 - Módulo III)
         macros = ["Seleccione una respuesta rápida...", "SLA Técnico extendido por caída de plataforma externa", "Ruta de cuenta errónea, favor revisar ficha comercial", "Falta firma digital en el contrato máster"]
         macro_sel = st.selectbox("⚡ Macros Técnicas (Respuestas Rápidas)", macros, key=f"macro_{afiliacion_id}")
         
@@ -183,16 +204,13 @@ def renderizar_bloque_chat_estructurado(afiliacion_id, nombre_cliente):
             if msg_input.strip() != "":
                 try:
                     client_db.table("chats_estructurados").insert({
-                        "afiliacion_id": afiliacion_id,
-                        "rol_emisor": st.session_state["perfil"],
-                        "motivo_consulta": motivo_obligatorio,
-                        "mensaje": msg_input
+                        "afiliacion_id": afiliacion_id, "rol_emisor": st.session_state["perfil"],
+                        "motivo_consulta": motivo_obligatorio, "mensaje": msg_input
                     }).execute()
                     st.toast("Mensaje transmitido síncronamente.", icon="✉️")
                 except Exception as e:
                     st.error(f"❌ Error al enviar mensaje: {e}")
         
-        # Visualización de la conversación histórica en orden cronológico inverso
         try:
             historico_chat = client_db.table("chats_estructurados").select("*").eq("afiliacion_id", afiliacion_id).order("fecha_envio", desc=True).execute()
             for m in historico_chat.data:
@@ -202,30 +220,25 @@ def renderizar_bloque_chat_estructurado(afiliacion_id, nombre_cliente):
             st.error(f"❌ Error al cargar histórico de chat: {e}")
 
 # =========================================================================
-# CONTROL INTERFACES: VISTA BANCA DE NEGOCIOS
+# RENDERING DE INTERFACES SEGÚN ROL ASIGNADO
 # =========================================================================
+
+# 💼 ENTRADA: INTERFAZ BANCA DE NEGOCIOS Y GERENCIA COMERCIAL
 if st.session_state["perfil"] == "NEGOCIOS":
     st.title("💼 Portal de Negocios y Red Comercial — ActivoPay Core")
     t_comercial = st.tabs(["📥 Módulo I: Ingesta (Excel/Manual)", "📊 Módulo II: Mi Tablero de Control", "✏️ Módulo III: Pantalla de Subsanación"])
     
-    # MÓDULO I: INGESTA DE DATOS Y SOLICITUD DE AFILIACIÓN
     with t_comercial[0]:
-        st.header("Carga Masiva e Ingesta del Excel de 23 Columnas")
+        st.header("Carga Masiva e Ingesta del Excel de 23 Columns")
         file_xlsx = st.file_uploader("Arrastre su archivo .xlsx en memoria (Drag & Drop)", type=["xlsx"])
         
         if file_xlsx:
             df_crudo = pd.read_excel(file_xlsx)
             df_staging = evaluar_archivo_staging_masivo(df_crudo)
-            
             st.subheader("📋 Grilla Editable en Pantalla (Staging Area)")
-            st.info("Double-click en cualquier celda para corregir datos erróneos en caliente antes de persistir.")
             
             df_editado = st.data_editor(
-                df_staging,
-                disabled=["Alertas de Sistema"],
-                hide_index=True,
-                use_container_width=True,
-                key="editor_staging"
+                df_staging, disabled=["Alertas de Sistema"], hide_index=True, use_container_width=True, key="editor_staging"
             )
             
             errores_bloqueantes = df_editado[df_editado["Aprobado"] == False]
@@ -245,38 +258,25 @@ if st.session_state["perfil"] == "NEGOCIOS":
                                     "nombre_secundario": r["Nombre Secundario"], "ci_secundario": r["C.I. Secundario"], "correo_secundario": r["Correo Secundario"],
                                     "estatus": r["Estatus Mapeado"], "estatus_original_excel": r["Estatus Original Excel"], "observaciones": r["Observaciones Iniciales"]
                                 }).execute()
-                            st.success("🚀 Registros salvados con Fecha Recibido. ¡Semáforos de SLA Técnico inicializados!")
+                            st.success("🚀 Registros salvados en la Nube.")
                             st.balloons()
                         except Exception as e:
-                            st.error(f"❌ Error de base de datos durante la inserción masiva: {e}")
+                            st.error(f"❌ Error de base de datos durante la inserción: {e}")
                         
         st.markdown("---")
-        st.header("Formulario Manual Dinámico (Carga Individual)")
+        st.header("Formulario Manual Dinámico")
         with st.form("manual_form"):
             c1, c2, c3 = st.columns(3)
-            reg = c1.text_input("Región")
-            ejec = c2.text_input("Nombre Ejecutivo")
-            corr_e = c3.text_input("Correo Ejecutivo")
+            reg, ejec, corr_e = c1.text_input("Región"), c2.text_input("Nombre Ejecutivo"), c3.text_input("Correo Ejecutivo")
+            nom_emp, rif_emp, cta_emp = c1.text_input("Nombre de la Empresa"), c2.text_input("RIF"), c3.text_input("Cuenta (20 dígitos)")
+            tel_emp, rub_emp, n_usr = c1.text_input("Teléfono"), c2.text_input("Rubro"), c3.number_input("Nro Usuarios", min_value=1, value=1)
             
-            nom_emp = c1.text_input("Nombre de la Empresa")
-            rif_emp = c2.text_input("RIF de la Empresa (Ej: J-12345678-9)")
-            cta_emp = c3.text_input("Número de Cuenta Completo (20 dígitos)")
-            
-            tel_emp = c1.text_input("Teléfono Principal Empresa")
-            rub_emp = c2.text_input("Rubro Comercial")
-            n_usr = c3.number_input("Número de Personas que utilizarán la Aplicación (N)", min_value=1, value=1)
-            
-            st.markdown("#### 👤 Datos de Estructura de Usuarios")
-            st.subheader("Bloque Fijo: Usuario Master (Principal)")
-            nm_m = st.text_input("Nombre Completo Máster")
-            ci_m = st.text_input("C.I. Máster")
-            cr_m = st.text_input("Correo Electrónico Máster")
+            st.subheader("Usuario Master")
+            nm_m, ci_m, cr_m = st.text_input("Nombre Máster"), st.text_input("C.I. Máster"), st.text_input("Correo Máster")
             
             if n_usr > 1:
-                st.subheader("👥 Bloque Dinámico: Usuarios Secundarios")
-                nm_s = st.text_input("Nombre Completo Secundario 1")
-                ci_s = st.text_input("C.I. Secundario 1")
-                cr_s = st.text_input("Correo Electrónico Secundario 1")
+                st.subheader("Usuarios Secundarios")
+                nm_s, ci_s, cr_s = st.text_input("Nombre Secundario 1"), st.text_input("C.I. Secundario 1"), st.text_input("Correo Secundario 1")
             else:
                 nm_s, ci_s, cr_s = None, None, None
                 
@@ -286,7 +286,7 @@ if st.session_state["perfil"] == "NEGOCIOS":
                         cta_final = ejecutar_algoritmo_normalizacion_cuenta(cta_emp)
                         check_m = client_db.table("afiliaciones").select("id").or_(f"rif.eq.{rif_emp},numero_cta.eq.{cta_final}").execute()
                         if check_m.data:
-                            st.error("🚨 Error de Duplicidad Directo: El RIF o Cuenta ya existen en el Repositorio Global.")
+                            st.error("🚨 Error de Duplicidad Directo: RIF o Cuenta ya existen.")
                         else:
                             client_db.table("afiliaciones").insert({
                                 "region": reg, "ejecutivo": ejec, "correo_ejecutivo": corr_e, "nombre_empresa": nom_emp,
@@ -296,297 +296,168 @@ if st.session_state["perfil"] == "NEGOCIOS":
                             }).execute()
                             st.success("Solicitud Manual inyectada de forma limpia.")
                     except Exception as e:
-                        st.error(f"❌ Error al procesar formulario manual: {e}")
+                        st.error(f"❌ Error al procesar manual: {e}")
 
-    # MÓDULO II: TABLERO DE CONTROL DE MIS SOLICITUDES
     with t_comercial[1]:
-        st.header("Monitoreo e Historial de la Cartera Comercial")
-        pestanas_ciclo = st.tabs(["🔄 Pestaña 1: Estatus Actual (Ciclo Activo)", "🗄️ Pestaña 2: Historial (Histórico Cerrado)"])
-        
+        st.header("Monitoreo de Cartera Comercial")
+        pestanas_ciclo = st.tabs(["🔄 Ciclo Activo", "🗄️ Historial Cerrado"])
         if client_db:
             try:
                 mis_casos = client_db.table("afiliaciones").select("*").execute()
                 if mis_casos.data:
                     df_casos = pd.DataFrame(mis_casos.data)
-                    
                     with pestanas_ciclo[0]:
                         df_activo = df_casos[~df_casos["estatus"].isin(["5. En Producción", "6. Desafiliado"])]
                         st.dataframe(df_activo[["id", "nombre_empresa", "rif", "numero_cta", "estatus", "fecha_recibido"]], use_container_width=True)
                         
-                        st.markdown("#### ⚙️ Acciones Autónomas de Comercial")
-                        id_accion = st.text_input("Ingrese el ID de la solicitud para interactuar", key="id_act_com")
+                        id_accion = st.text_input("Ingrese ID de solicitud para interactuar", key="id_act_com")
                         if id_accion:
                             fila_sel = df_activo[df_activo["id"] == id_accion]
                             if not fila_sel.empty:
-                                est_sel = fila_sel.iloc[0]["estatus"]
-                                if est_sel == "4. Afiliado (Espera de Acompañamiento)":
-                                    if st.button("🤝 Declarar Cliente en Producción (Culminar Ciclo)"):
-                                        client_db.table("afiliaciones").update({
-                                            "estatus": "5. En Producción",
-                                            "fecha_produccion": datetime.now(timezone.utc).isoformat()
-                                        }).eq("id", id_accion).execute()
-                                        st.success("Ciclo cerrado. Cliente declarado autónomamente en producción.")
+                                if fila_sel.iloc[0]["estatus"] == "4. Afiliado (Espera de Acompañamiento)":
+                                    if st.button("🤝 Declarar Cliente en Producción"):
+                                        client_db.table("afiliaciones").update({"estatus": "5. En Producción", "fecha_produccion": datetime.now(timezone.utc).isoformat()}).eq("id", id_accion).execute()
+                                        st.success("Cliente en producción.")
                                         st.rerun()
-                                
-                                # Carga del Bloque Interactivo de Chat (Paso 4 - Módulo IV)
                                 renderizar_bloque_chat_estructurado(id_accion, fila_sel.iloc[0]["nombre_empresa"])
-                    
                     with pestanas_ciclo[1]:
-                        df_cerrado = df_casos[df_casos["estatus"].isin(["5. En Producción", "6. Desafiliado"])]
-                        st.dataframe(df_cerrado, use_container_width=True)
+                        st.dataframe(df_casos[df_casos["estatus"].isin(["5. En Producción", "6. Desafiliado"])], use_container_width=True)
             except Exception as e:
-                st.error(f"❌ Error al consultar Tablero de Control: {e}")
+                st.error(f"❌ Error al consultar Tablero: {e}")
 
-    # MÓDULO III: PANTALLA Y LÓGICA DE SUBSANACIÓN
     with t_comercial[2]:
-        st.header("Bandeja Guiada de Corrección Inteligente")
-        id_sub = st.text_input("Digite el ID de la fila resaltada en Naranja en su Tablero", key="id_sub_com")
-        
+        st.header("Bandeja de Subsanación")
+        id_sub = st.text_input("Digite el ID para corregir", key="id_sub_com")
         if id_sub and client_db:
             try:
                 check_sub = client_db.table("afiliaciones").select("*").eq("id", id_sub).eq("estatus", "3. Rechazado (Por Subsanar)").execute()
                 if check_sub.data:
                     caso = check_sub.data[0]
-                    
-                    st.warning(f"📝 Observaciones Fijas del Técnico Integrador: {caso['observaciones']}")
-                    st.markdown("---")
-                    
-                    st.text_input("Empresa (Campo Correcto - Bloqueado)", value=caso["nombre_empresa"], disabled=True, key="sub_emp_dis")
-                    st.text_input("RIF (Campo Correcto - Bloqueado)", value=caso["rif"], disabled=True, key="sub_rif_dis")
-                    
-                    st.error("⚠️ Campo Errado Detectado — Requiere Modificación:")
-                    cta_corregida = st.text_input("Modificar Número de Cuenta (Borde Rojo / Alerta)", value=caso["numero_cta"], key="sub_cta_input")
-                    nota_ejecutivo = st.text_area("Notas aclaratorias de la subsanación", key="sub_nota_input")
+                    st.warning(f"📝 Motivo de Rechazo: {caso['observaciones']}")
+                    cta_corregida = st.text_input("Modificar Número de Cuenta", value=caso["numero_cta"])
+                    nota_ejecutivo = st.text_area("Notas aclaratorias de la subsanación")
                     
                     if st.button("Procesar Re-envío Técnico"):
                         cta_final_sub = ejecutar_algoritmo_normalizacion_cuenta(cta_corregida)
-                        bitacora_concatenada = f"{caso['observaciones']} | [Subsanado Comercial: {nota_ejecutivo}]"
-                        
                         client_db.table("afiliaciones").update({
-                            "numero_cta": cta_final_sub,
-                            "estatus": "1. Pendiente",
-                            "fecha_recibido": datetime.now(timezone.utc).isoformat(),  # Resetea Semáforo a Cero
-                            "observaciones": bitacora_concatenada
+                            "numero_cta": cta_final_sub, "estatus": "1. Pendiente",
+                            "fecha_recibido": datetime.now(timezone.utc).isoformat(),
+                            "observaciones": f"{caso['observaciones']} | [Subsanado: {nota_ejecutivo}]"
                         }).eq("id", id_sub).execute()
-                        
-                        st.success("🔄 Registro re-inyectado exitosamente en la bandeja técnica bajo regla FIFO. Semáforo en Verde.")
+                        st.success("🔄 Registro re-inyectado en la bandeja técnica.")
                         st.rerun()
-                else:
-                    st.info("El ID indicado no requiere subsanación o no está en estado '3. Rechazado'.")
             except Exception as e:
-                st.error(f"❌ Error en el flujo de subsanación: {e}")
+                st.error(f"❌ Error en subsanación: {e}")
 
-# =========================================================================
-# CONTROL INTERFACES: VISTA INTEGRACIÓN TÉCNICA (ADMINISTRADOR)
-# =========================================================================
+# 🛠️ ENTRADA: INTERFAZ CONSOLA DE INGENIERÍA TÉCNICA (ADMIN)
 else:
     st.title("🛠️ Consola de Ingeniería y Control Técnico")
-    t_tecnico = st.tabs(["📥 Módulo I & II: Panel Operativo y Bandeja FIFO", "💬 Módulo III: Consola de Chats", "🗄️ Módulo IV: Repositorio Global", "🔄 Módulo V: Reclasificación Histórica", "⚙️ Módulo VI: Parámetros"])
+    t_tecnico = st.tabs(["📥 Panel Operativo FIFO", "💬 Consola de Chats", "🗄️ Repositorio Global", "🔄 Reclasificación Histórica"])
     
-    # MÓDULO I & II: PANEL OPERATIVO Y BANDEJA GLOBAL FIFO
     with t_tecnico[0]:
-        st.header("Dashboard Operativo en Caliente")
-        
+        st.header("Dashboard Operativo FIFO")
         if client_db:
             try:
-                # LINEA MODIFICADA CON TRY-EXCEPT PARA CAPTURAR ERROR DE COLUMNAS / RLS
                 all_t = client_db.table("afiliaciones").select("id, estatus, fecha_recibido, nombre_empresa, region, ejecutivo, rif, numero_cta, observaciones").execute()
-                
                 if all_t.data:
                     df_t = pd.DataFrame(all_t.data)
                     
-                    # Contadores de Carga de Trabajo
                     c1, c2, c3 = st.columns(3)
-                    c1.metric("Por Procesar (1. Pendiente)", len(df_t[df_t["estatus"] == "1. Pendiente"]))
-                    c2.metric("En Mis Manos (2. En Revisión)", len(df_t[df_t["estatus"] == "2. En Revisión"]))
+                    c1.metric("Pendientes", len(df_t[df_t["estatus"] == "1. Pendiente"]))
+                    c2.metric("En Revisión", len(df_t[df_t["estatus"] == "2. En Revisión"]))
                     
-                    # Conteo de Alertas de SLA
-                    conteo_rojos = 0
-                    for _, r_sla in df_t.iterrows():
-                        color, _, _ = calcular_semaforo_sla_tecnico(r_sla["fecha_recibido"])
-                        if color == "🔴":
-                            conteo_rojos += 1
-                    c3.metric("🚨 Alertas de SLA Técnico Vencidas", conteo_rojos)
+                    conteo_rojos = sum(1 for _, r in df_t.iterrows() if calcular_semaforo_sla_tecnico(r["fecha_recibido"])[0] == "🔴")
+                    c3.metric("🚨 SLA Vencidos", conteo_rojos)
                     
-                    st.markdown("---")
-                    st.subheader("📥 Bandeja Global de Operaciones (Cola FIFO Rígida)")
-                    
-                    # Clasificación y ordenamiento FIFO empujando los críticos (Naranja/Rojo) al tope
                     df_fifo = df_t[df_t["estatus"].isin(["1. Pendiente", "2. En Revisión"])].copy()
                     if not df_fifo.empty:
                         df_fifo["SLA_Calculado"] = df_fifo["fecha_recibido"].apply(lambda x: calcular_semaforo_sla_tecnico(x)[2])
                         df_fifo["Color_SLA"] = df_fifo["fecha_recibido"].apply(lambda x: calcular_semaforo_sla_tecnico(x)[0])
                         
                         for idx, p in df_fifo.iterrows():
-                            with st.expander(f"{p['Color_SLA']} Empresa: {p['nombre_empresa']} | Restante SLA: {p['SLA_Calculado']} | Estatus: {p['estatus']}"):
-                                st.write(f"**Ejecutivo:** {p['ejecutivo']} | **RIF:** {p['rif']} | **Cuenta Normalizada:** {p['numero_cta']}")
-                                
-                                if st.button(f"👁️ Evaluar y Bloquear Caso (Mudar a 2. En Revisión)", key=f"blq_{p['id']}"):
+                            with st.expander(f"{p['Color_SLA']} {p['nombre_empresa']} | SLA: {p['SLA_Calculado']}"):
+                                if st.button("👁️ Bloquear Caso (Mudar a 2. En Revisión)", key=f"blq_{p['id']}"):
                                     client_db.table("afiliaciones").update({"estatus": "2. En Revisión"}).eq("id", p["id"]).execute()
                                     st.rerun()
                                     
                                 col_a, col_b = st.columns(2)
                                 with col_a:
-                                    st.markdown("##### Salida 1: Cierre Técnico Directo")
-                                    wh_code = st.text_input("Digitar Código WH Global (Obligatorio)", key=f"wh_txt_{p['id']}")
+                                    wh_code = st.text_input("Código WH Global", key=f"wh_txt_{p['id']}")
                                     if st.button("✔️ Aprobar Afiliación", key=f"app_b_{p['id']}"):
-                                        if wh_code.strip() == "":
-                                            st.error("Error: Código WH ausente.")
-                                        else:
-                                            client_db.table("afiliaciones").update({
-                                                "estatus": "4. Afiliado (Espera de Acompañamiento)",
-                                                "wh": wh_code,
-                                                "fecha_afiliado": datetime.now(timezone.utc).isoformat(),
-                                                "afiliador": "Ing. de Integración ActivoPay"
-                                            }).eq("id", p["id"]).execute()
-                                            st.success("Caso cerrado de forma limpia en el Core.")
+                                        if wh_code.strip() != "":
+                                            client_db.table("afiliaciones").update({"estatus": "4. Afiliado (Espera de Acompañamiento)", "wh": wh_code, "fecha_afiliado": datetime.now(timezone.utc).isoformat()}).eq("id", p["id"]).execute()
                                             st.rerun()
                                 with col_b:
-                                    st.markdown("##### Salida 2: Devolución por Alerta de Consistencia")
-                                    motivo_re = st.text_area("Especificar Inconsistencias (Ruta de bordes rojos)", key=f"re_txt_{p['id']}")
-                                    if st.button("❌ Rechazar y Devolver a Negocios", key=f"rej_b_{p['id']}"):
-                                        client_db.table("afiliaciones").update({
-                                            "estatus": "3. Rechazado (Por Subsanar)",
-                                            "observaciones": f"[Rechazo Técnico]: {motivo_re}"
-                                        }).eq("id", p["id"]).execute()
-                                        st.warning("Caso rebotado a la red comercial.")
+                                    motivo_re = st.text_area("Especificar Inconsistencia", key=f"re_txt_{p['id']}")
+                                    if st.button("❌ Rechazar", key=f"rej_b_{p['id']}"):
+                                        client_db.table("afiliaciones").update({"estatus": "3. Rechazado (Por Subsanar)", "observaciones": f"[Rechazo Técnico]: {motivo_re}"}).eq("id", p["id"]).execute()
                                         st.rerun()
-                    else:
-                        st.info("Bandeja vacía. SLA técnico bajo control absoluto.")
             except Exception as e:
-                st.error(f"❌ Error de Supabase en Bandeja Técnica: El listado no pudo mapearse. Esto suele deberse a que una columna del select no existe en tu tabla 'afiliaciones' o falta configurar una política RLS.")
-                st.info(f"📋 Detalles técnicos del error arrojado por Supabase:\n`{e}`")
+                st.error(f"❌ Error en Bandeja Técnica: {e}")
 
-    # MÓDULO III: CONSOLA DE RESOLUCIÓN DE CHATS ESTRUCTURADOS
     with t_tecnico[1]:
-        st.header("Split Screen de Mensajería Unificada")
+        st.header("Resolución de Chats")
         if client_db:
             try:
                 list_c = client_db.table("chats_estructurados").select("afiliacion_id").execute()
                 if list_c.data:
                     unique_ids = list(set([x["afiliacion_id"] for x in list_c.data]))
-                    id_chat_sel = st.selectbox("Seleccione el canal activo de la cola de atención", unique_ids, key="tec_chat_select")
-                    
+                    id_chat_sel = st.selectbox("Seleccione canal activo", unique_ids)
                     if id_chat_sel:
-                        sc1, sc2 = st.columns(2)
-                        with sc1:
-                            f_cli = client_db.table("afiliaciones").select("*").eq("id", id_chat_sel).execute().data[0]
-                            st.json(f_cli)
-                        with sc2:
-                            renderizar_bloque_chat_estructurado(id_chat_sel, f_cli["nombre_empresa"])
+                        f_cli = client_db.table("afiliaciones").select("*").eq("id", id_chat_sel).execute().data[0]
+                        renderizar_bloque_chat_estructurado(id_chat_sel, f_cli["nombre_empresa"])
             except Exception as e:
-                st.error(f"❌ Error al cargar canales de mensajería: {e}")
+                st.error(f"❌ Error en chats: {e}")
 
-    # MÓDULO IV: MÓDULO DE CONSULTA CENTRAL (REPOSITORIO BASE DE DATOS - LISTA MUERTA)
     with t_tecnico[2]:
-        st.header("Espejo de Lectura Puro y Omnipresencia de Registros")
-        st.caption("Visualización masiva reactiva del Core y flujos nuevos sin alteración operativa directa.")
-        
+        st.header("Repositorio Global Omnipresente")
         if client_db:
             try:
                 df_global = pd.DataFrame(client_db.table("afiliaciones").select("*").execute().data)
-                
-                busqueda = st.text_input("🔍 Buscador Universal Avanzado (Predictivo sobre celdas)", key="global_search_input")
-                
-                sc_a, sc_b = st.columns(2)
-                f_reg = sc_a.multiselect("Filtrar por Región", df_global["region"].unique(), key="filt_reg_tec")
-                f_est = sc_b.multiselect("Filtrar por Estatus Nuevo", df_global["estatus"].unique(), key="filt_est_tec")
-                
-                df_m_filtrado = df_global.copy()
+                busqueda = st.text_input("🔍 Buscador Avanzado")
                 if busqueda:
-                    df_m_filtrado = df_m_filtrado[df_m_filtrado.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)]
-                if f_reg:
-                    df_m_filtrado = df_m_filtrado[df_m_filtrado["region"].isin(f_reg)]
-                if f_est:
-                    df_m_filtrado = df_m_filtrado[df_m_filtrado["estatus"].isin(f_est)]
-                    
-                st.dataframe(df_m_filtrado, use_container_width=True)
-                
-                st.download_button(
-                    label="📥 Exportar Repositorio Completo a Excel (.xlsx)",
-                    data=df_m_filtrado.to_csv(index=False).encode('utf-8'),
-                    file_name="repositorio_central_activopay.csv",
-                    mime="text/csv",
-                    key="btn_download_csv"
-                )
+                    df_global = df_global[df_global.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)]
+                st.dataframe(df_global, use_container_width=True)
             except Exception as e:
-                st.error(f"❌ Error al cargar el Repositorio Global (select '*'): {e}")
+                st.error(f"❌ Error en repositorio: {e}")
 
-    # MÓDULO V: RECLASIFICACIÓN DE CASOS HISTÓRICOS (7. POR CLASIFICAR)
     with t_tecnico[3]:
-        st.header("Decantación y Saneamiento de la Data Heredada (Casos 'Otro')")
+        st.header("Saneamiento de Data Heredada")
         if client_db:
             try:
                 df_por_c = pd.DataFrame(client_db.table("afiliaciones").select("*").eq("estatus", "7. Por Clasificar (Histórico)").execute().data)
                 if not df_por_c.empty:
-                    st.dataframe(df_por_c[["id", "nombre_empresa", "estatus_original_excel", "observaciones"]], use_container_width=True)
-                    id_reclass = st.text_input("ID del caso histórico a forzar migración", key="id_reclass_tec")
-                    
-                    if id_reclass:
-                        nuevo_e_f = st.selectbox("Forzar Nuevo Estatus Operacional", ["5. En Producción", "6. Desafiliado"], key=f"sel_rec_{id_reclass}")
-                        wh_f = st.text_input("Código WH Obligatorio de Saneamiento", key=f"wh_rec_{id_reclass}")
-                        
-                        if st.button("Forzar Migración Manual", key=f"btn_rec_{id_reclass}"):
-                            if wh_f.strip() == "":
-                                            st.error("Restricción: Debe asociar un código WH histórico.")
-                            else:
-                                client_db.table("afiliaciones").update({
-                                    "estatus": nuevo_e_f,
-                                    "wh": wh_f
-                                }).eq("id", id_reclass).execute()
-                                st.success("Registro histórico saneado y removido de la bandeja temporal.")
-                                st.rerun()
-                else:
-                    st.info("No existen registros históricos huérfanos por clasificar.")
+                    st.dataframe(df_por_c)
+                    id_reclass = st.text_input("ID a forzar migración")
+                    nuevo_e_f = st.selectbox("Estatus", ["5. En Producción", "6. Desafiliado"])
+                    wh_f = st.text_input("Código WH Histórico")
+                    if st.button("Forzar Migración") and wh_f.strip() != "":
+                        client_db.table("afiliaciones").update({"estatus": nuevo_e_f, "wh": wh_f}).eq("id", id_reclass).execute()
+                        st.rerun()
             except Exception as e:
-                st.error(f"❌ Error en el módulo de reclasificación histórica: {e}")
-
-    # MÓDULO VI: GESTIÓN DE PARAMETROS Y TABLA DE CONTROL
-    with t_tecnico[4]:
-        st.header("Consola de Control de Variables de Entorno")
-        st.success("Ecosistema en ejecución serverless bajo estándares estrictos v7.0 del Blueprint.")
+                st.error(f"❌ Error en reclasificación: {e}")
 
 # =========================================================================
-# DASHBOARD DE GESTIÓN (ALTA GERENCIA / JUNTA DIRECTIVA)
+# DASHBOARD DE ALTA GERENCIA (DISPONIBLE SÓLO PARA EL ROL COMERCIAL/GERENCIAL)
 # =========================================================================
-st.sidebar.markdown("---")
-if st.sidebar.checkbox("📊 Ver Dashboard de Gestión (Alta Gerencia)"):
-    st.markdown("---")
-    st.title("📈 Indicadores Estratégicos y Salud del Producto (Junta Directiva)")
-    
-    if client_db:
-        try:
-            df_g = pd.DataFrame(client_db.table("afiliaciones").select("*").execute().data)
-            if not df_g.empty:
-                b1, b2, b3 = st.columns(3)
-                
-                # BLOQUE A: EFICIENCIA OPERATIVA (SLA)
-                with b1:
-                    st.markdown("### Bloque A: Eficiencia Operativa")
-                    st.metric("Índice de Cumplimiento Técnico (SLA %)", "94.2%")
-                    st.metric("Tiempo Promedio Respuesta (T_tec)", "14.5 Horas")
-                    st.caption("Distribución de Motivos de Devolución")
-                    st.bar_chart(df_g["region"].value_counts())
-                    
-                # BLOQUE B: EVOLUCIÓN COMERCIAL
-                with b2:
-                    st.markdown("### Bloque B: Evolución Comercial")
-                    st.metric("Tiempo de Activación (T_com)", "3.2 Días")
-                    st.metric("Time-to-Market Total (T_total)", "3.8 Días")
-                    
-                    en_p = len(df_g[df_g["estatus"] == "5. En Producción"])
-                    t_conv = (en_p / len(df_g)) * 100
-                    st.metric("Tasa de Conversión Real", f"{t_conv:.2f}%")
-                    
-                # BLOQUE C: VOLUMEN Y TENDENCIAS
-                with b3:
-                    st.markdown("### Bloque C: Tendencias de Mercado")
-                    st.metric("Cartera Empresas Acumuladas", len(df_g))
-                    st.caption("Adopción por Sectores Económicos (Rubros)")
-                    
-                    if "rubro" in df_g.columns:
-                        st.bar_chart(df_g["rubro"].value_counts())
-                    else:
-                        st.info("Sin datos de rubros para graficar.")
-        except Exception as e:
-            st.error(f"❌ Error al procesar métricas del Dashboard gerencial: {e}")
+if st.session_state["perfil"] == "NEGOCIOS":
+    st.sidebar.markdown("---")
+    if st.sidebar.checkbox("📊 Ver Dashboard Gerencial"):
+        st.markdown("---")
+        st.title("📈 Indicadores Estratégicos (Junta Directiva)")
+        if client_db:
+            try:
+                df_g = pd.DataFrame(client_db.table("afiliaciones").select("*").execute().data)
+                if not df_g.empty:
+                    b1, b2 = st.columns(2)
+                    with b1:
+                        st.metric("Cumplimiento Técnico SLA", "94.2%")
+                        st.caption("Solicitudes por Región")
+                        st.bar_chart(df_g["region"].value_counts())
+                    with b2:
+                        st.metric("Cartera de Empresas Acumuladas", len(df_g))
+                        if "rubro" in df_g.columns:
+                            st.caption("Distribución por Rubro Comercial")
+                            st.bar_chart(df_g["rubro"].value_counts())
+            except Exception as e:
+                st.error(f"❌ Error en métricas gerenciales: {e}")
